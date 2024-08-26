@@ -21,10 +21,7 @@ fn main() {
     };
 
     let files = match read_migration_files() {
-        Some(value) => {
-            println!("{:?}", value);
-            value
-        }
+        Some(value) => value,
         None => {
             println!("No migrations to apply! Exiting...");
             std::process::exit(0);
@@ -39,21 +36,105 @@ fn main() {
         }
     };
 
-    let _ = client.prepare("");
-    // let mut transaction = client.transaction().unwrap().execute("TODO", &[]).unwrap();
+    let migration_history: Vec<String> = if let Ok(value) =
+        client.query("SELECT * FROM public.migration_history", &[])
+    {
+        value.iter().map(|x| x.get("migration_id")).collect()
+    } else {
+        if let Err(e) =
+                client.execute("CREATE TABLE IF NOT EXISTS public.migration_history (migration_id varchar(255) primary key)", &[])
+            {
+                eprintln!("Error while creating table public.migration_history : {e}");
+                std::process::exit(1);
+            } else {
+                vec![]
+            }
+    };
+
+    let mut not_applied_migrations: Vec<&String> = files
+        .iter()
+        .filter(|x| !migration_history.contains(x))
+        .collect();
+
+    not_applied_migrations.sort();
+
+    for migration in &not_applied_migrations {
+        let script = match fs::read_to_string(format!("migrations/{migration}")) {
+            Ok(value) => value,
+            Err(e) => {
+                eprint!("Failed to apply migration {migration} : {e}");
+                std::process::exit(1);
+            }
+        };
+
+        let mut transaction = match client.transaction() {
+            Ok(value) => value,
+            Err(e) => {
+                eprint!("Failed to apply migration {migration} : {e}");
+                std::process::exit(1);
+            }
+        };
+
+        if let Err(e) = transaction.execute(&script, &[]) {
+            eprint!("Failed to apply migration {migration} : {e}");
+            std::process::exit(1);
+        }
+
+        if let Err(e) = transaction.execute(
+            "INSERT INTO public.migration_history VALUES ($1)",
+            &[migration],
+        ) {
+            eprint!("Failed to apply migration {migration} : {e}");
+            std::process::exit(1);
+        }
+
+        if let Err(e) = transaction.commit() {
+            eprint!("Failed to apply migration {migration} : {e}");
+            std::process::exit(1);
+        }
+    }
+
+    if not_applied_migrations.is_empty() {
+        println!("No migrations to apply! Exiting...");
+    } else {
+        println!(
+            "Successfully applied migrations: {:?}",
+            not_applied_migrations
+        );
+    }
 }
 
 fn read_migration_files() -> Option<Vec<String>> {
     if let Ok(value) = fs::read_dir("./migrations") {
         //TODO: Fix this unwrap
         let file_names: Vec<String> = value
-            .map(|x| x.unwrap().path().display().to_string())
+            .filter_map(|x| {
+                let file_name = x
+                    .unwrap()
+                    .path()
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string();
+
+                let valid_migration = file_name
+                    .chars()
+                    .rev()
+                    .last()
+                    .is_some_and(|x| x.is_numeric());
+
+                if valid_migration {
+                    Some(file_name)
+                } else {
+                    None
+                }
+            })
             .collect();
 
-        if !file_names.is_empty() {
-            Some(file_names)
-        } else {
+        if file_names.is_empty() {
             None
+        } else {
+            Some(file_names)
         }
     } else {
         println!("No \"migrations\" directory was found, creating one...");
