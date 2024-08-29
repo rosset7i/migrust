@@ -2,15 +2,9 @@ use postgres::{Client, Error, NoTls, Row};
 use std::fs::{create_dir_all, read_dir, read_to_string};
 
 pub fn connect_to_client(database_url: &str) -> Client {
-    match Client::connect(database_url, NoTls) {
-        Ok(client) => client,
-        Err(err) => {
-            eprint!(
-                "Unable to connect to the database, is your connection string correct? : {err}"
-            );
-            std::process::exit(1);
-        }
-    }
+    Client::connect(database_url, NoTls).unwrap_or_else(|err| {
+        panic!("Unable to connect to the database, is your connection string correct? : {err}")
+    })
 }
 
 pub fn get_migration_history(client: &mut Client) -> Result<Vec<Row>, Error> {
@@ -21,12 +15,8 @@ pub fn get_migration_history(client: &mut Client) -> Result<Vec<Row>, Error> {
 }
 
 pub fn create_migration_history(client: &mut Client) {
-    let result = client.execute("CREATE TABLE IF NOT EXISTS public.migration_history (migration_id varchar(255) primary key)", &[]);
-
-    if let Err(err) = result {
-        eprintln!("Error while creating table public.migration_history : {err}");
-        std::process::exit(1);
-    }
+    client.execute("CREATE TABLE IF NOT EXISTS public.migration_history (migration_id varchar(255) primary key)", &[])
+        .unwrap_or_else(|err| panic!("Error while creating table public.migration_history : {err}"));
 }
 
 pub fn read_migration_files() -> Option<Vec<String>> {
@@ -61,38 +51,26 @@ pub fn read_migration_files() -> Option<Vec<String>> {
 
 pub fn apply_migrations(client: &mut Client, not_applied_migrations: &[String]) {
     not_applied_migrations.iter().for_each(|migration| {
-        let script = match read_to_string(format!("migrations/{migration}")) {
-            Ok(value) => value,
-            Err(err) => {
-                eprint!("Failed to apply migration {migration} : {err}");
-                std::process::exit(1);
-            }
-        };
+        let script = read_to_string(format!("migrations/{migration}"))
+            .unwrap_or_else(|err| panic!("Failed to apply migration {migration} : {err}"));
 
-        let mut transaction = match client.transaction() {
-            Ok(value) => value,
-            Err(err) => {
-                eprint!("Failed to apply migration {migration} : {err}");
-                std::process::exit(1);
-            }
-        };
+        let mut transaction = client
+            .transaction()
+            .unwrap_or_else(|err| panic!("Failed to apply migration {migration} : {err}"));
 
-        if let Err(err) = transaction.execute(&script, &[]) {
-            eprint!("Failed to apply migration {migration} : {err}");
-            std::process::exit(1);
-        }
+        transaction
+            .execute(&script, &[])
+            .unwrap_or_else(|err| panic!("Failed to apply migration {migration} : {err}"));
 
-        if let Err(err) = transaction.execute(
-            "INSERT INTO public.migration_history VALUES ($1)",
-            &[migration],
-        ) {
-            eprint!("Failed to apply migration {migration} : {err}");
-            std::process::exit(1);
-        }
+        transaction
+            .execute(
+                "INSERT INTO public.migration_history VALUES ($1)",
+                &[migration],
+            )
+            .unwrap_or_else(|err| panic!("Failed to apply migration {migration} : {err}"));
 
-        if let Err(err) = transaction.commit() {
-            eprint!("Failed to apply migration {migration} : {err}");
-            std::process::exit(1);
-        }
+        transaction
+            .commit()
+            .unwrap_or_else(|err| panic!("Failed to apply migration {migration} : {err}"));
     });
 }

@@ -2,18 +2,11 @@ use dotenv::dotenv;
 use std::env;
 
 pub fn get_database_url() -> String {
-    match env::var("DATABASE_URL") {
-        Ok(value) => value,
-        Err(err) => {
-            eprint!("Unable to find \"DATABASE_URL\", is your .env file setup correctly? : {err}");
-            std::process::exit(1);
-        }
-    }
+    env::var("DATABASE_URL").unwrap_or_else(|err| {
+        panic!("Unable to find \"DATABASE_URL\", is your .env file setup correctly? : {err}")
+    })
 }
 
 pub fn read_environment_variables() {
-    if let Err(err) = dotenv() {
-        eprintln!("Error while parsing environment variables : {err}");
-        std::process::exit(1);
-    }
+    dotenv().unwrap_or_else(|err| panic!("Error while parsing environment variables : {err}"));
 }

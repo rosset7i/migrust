@@ -16,7 +16,7 @@ fn main() {
         value
     } else {
         println!("No migrations to apply! Exiting...");
-        std::process::exit(0);
+        return;
     };
 
     let mut client = connect_to_client(&database_url);
